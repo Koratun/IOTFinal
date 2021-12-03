@@ -13,13 +13,15 @@
 
 const uint port = 10000;
 
-WiFiServer server(port);
+//WiFiServer server(port);
 WiFiClient remoteClient;
 
 #include "secrets.h"
 
 
 void testConnection(){
+  M5.Lcd.println("Testing connection...");
+
   int retries = 5;
   while(!remoteClient.connect(serverIP, port) && (retries-- > 0)){
     Serial.print(".");
@@ -33,8 +35,17 @@ void testConnection(){
   
 
   remoteClient.print("Hello from the M5StickCPlus!");
+  Serial.println("Sent message to server");
+
+  //Wait for a response from the server
+  delay(50);
+  while(remoteClient.available()){
+    Serial.print((char)remoteClient.read());
+  }
 
   remoteClient.stop();
+
+  Serial.println("Disconnected from server");
 
 }
 
@@ -52,15 +63,34 @@ void setup() {
   }
   Serial.println("\nConnected!");
 
-  server.begin();
- 
+  int retries = 5;
+  while(!remoteClient.connect(serverIP, port) && (retries-- > 0)){
+    Serial.print(".");
+  }
+  if(!remoteClient.connected()){
+    Serial.println("Did not connect");
+    while(1);
+  }
+  
+  Serial.println("\nConnected to server!");
+  
+
+  remoteClient.print("Hello from the M5StickCPlus!");
+  Serial.println("Sent message to server");
+
 }
 
 void loop() {
+  //Read the button
+  M5.update();
   
   //If the user presses the main button, test the connection
   if(M5.BtnA.wasPressed()){
-    testConnection();
+    remoteClient.print("Hello again!");
+  }
+
+  while(remoteClient.available()){
+    Serial.print((char)remoteClient.read());
   }
 
 }
