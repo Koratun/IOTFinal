@@ -113,14 +113,13 @@ void setup() {
   }
   if(!remoteClient.connected()){
     Serial.println("Did not connect");
-    while(1);
-  }
-  
-  Serial.println("\nConnected to server!");
-  
+  }else{
+    Serial.println("\nConnected to server!");
 
-  remoteClient.print("->Hello from the M5StickCPlus!!");
-  Serial.println("Sent message to server");
+
+    remoteClient.print("->Hello from the M5StickCPlus!!");
+    Serial.println("Sent message to server");
+  }
 
   i2sInit();
   xTaskCreate(mic_record_task, "mic_record_task", 2048, NULL, 1, NULL);
@@ -129,8 +128,6 @@ void setup() {
 long timer = 0;
 uint8_t secondsToWait = 25;
 
-uint8_t counter = 0;
-
 void loop() {
   //Read the button
   M5.update();
@@ -138,6 +135,7 @@ void loop() {
   //If the user presses the main button, start the timer
   if(M5.BtnA.wasPressed()){
     //Set timer
+    Serial.println("Started recording");
     timer = millis() + secondsToWait * 1000;
   }
 
@@ -150,10 +148,10 @@ void loop() {
       remoteClient.print(hexEncode(adcBuffer[i])+';');
       mutex = false;
     }
-  }else{
+  }else if(timer != 0){
     //Once the time has expired, reset the timer
+    Serial.println("Finished recording");
     timer = 0;
-    counter = 0;
   }
 
   while(remoteClient.available()){

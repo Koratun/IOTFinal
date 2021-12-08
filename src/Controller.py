@@ -30,7 +30,7 @@ outputs = []
 loop = asyncio.get_event_loop()
 
 # A method that creates asyncio tasks to recognize the audio
-def createAudioTask(audio_file):
+async def createAudioTask(audio_file):
     # Create a task to recognize the audio
     return loop.create_task(AudioHub.getShazam(audio_file))
 
