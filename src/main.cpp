@@ -94,7 +94,8 @@ void i2sInit()
 
 
 void setup() {
-  
+  Serial.begin(115200);
+
   M5.begin();
   M5.Lcd.setRotation(3);
 
