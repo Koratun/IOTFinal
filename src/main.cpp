@@ -48,20 +48,28 @@ String hexEncode(int16_t n){
 // the ADC buffer while it is being written to
 bool mutex = false;
 
+// a flag to indicate if the buffer is ready to be read
+bool bufferReady = false;
+
 //Mic Code
 void mic_record_task (void* arg)
 {   
   size_t bytesread;
   while(1){
-    while(mutex);
+    while(mutex){
+      //Delay is needed because the M5 is not using true multithreading
+      //Without this delay the program gets stuck in this loop.
+      vTaskDelay(1);
+    }
     mutex = true;
     i2s_read(I2S_NUM_0,(char*) BUFFER, READ_LEN, &bytesread, (100 / portTICK_RATE_MS));
-    adcBuffer = (int16_t *)BUFFER; 
-    mutex = false;
     // This has the effect of casting the uint8_t buffer to an int16_t buffer
     // Effectively converting two values in the lower order array:
     // [low_order_bits, high_order_bits] to a single value in an 
     // array of half the length, but holding more value: [16bit_value]
+    adcBuffer = (int16_t *)BUFFER; 
+    bufferReady = true;
+    mutex = false;
     
     vTaskDelay(100 / portTICK_RATE_MS);
   }
@@ -69,27 +77,30 @@ void mic_record_task (void* arg)
 
 void i2sInit()
 {
-   i2s_config_t i2s_config = {
+  i2s_config_t i2s_config = {
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
     .sample_rate =  44100,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT, // is fixed at 12bit, stereo, MSB
-    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT, //was _ALL_RIGHT
+    .channel_format = I2S_CHANNEL_FMT_ALL_RIGHT, //from _RIGHT_LEFT
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 4,
-    .dma_buf_len = 1024,
-   };
+    .dma_buf_count = 2,
+    .dma_buf_len = 128,
+  };
 
-   i2s_pin_config_t pin_config;
-   pin_config.bck_io_num   = I2S_PIN_NO_CHANGE;
-   pin_config.ws_io_num    = PIN_CLK;
-   pin_config.data_out_num = I2S_PIN_NO_CHANGE;
-   pin_config.data_in_num  = PIN_DATA;
-	
-   
-   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-   i2s_set_pin(I2S_NUM_0, &pin_config);
-   i2s_set_clk(I2S_NUM_0, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
+  i2s_pin_config_t pin_config;
+  pin_config.bck_io_num   = I2S_PIN_NO_CHANGE;
+  pin_config.ws_io_num    = PIN_CLK;
+  pin_config.data_out_num = I2S_PIN_NO_CHANGE;
+  pin_config.data_in_num  = PIN_DATA;
+
+  
+  esp_err_t err = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+  if (err != ESP_OK) {
+    Serial.printf("Failed installing driver: %d\n", err);
+  }
+  i2s_set_pin(I2S_NUM_0, &pin_config);
+  i2s_set_clk(I2S_NUM_0, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
 }
 
 
@@ -141,13 +152,19 @@ void loop() {
 
   //If the timer has been set, continue streaming data
   if(millis() < timer){
+    //Wait here until the buffer is ready and the mutex is free
+    while(mutex || !bufferReady){
+      //Delay is needed because the M5 is not using true multithreading
+      //Without this delay the program gets stuck in this loop.
+      vTaskDelay(1 / portTICK_RATE_MS);
+    }
+    mutex = true;
     for(int i = 0; i < READ_LEN / 2; i++){
       //Encode data as hex string and send to server
-      while(mutex);
-      mutex = true;
       remoteClient.print(hexEncode(adcBuffer[i])+';');
-      mutex = false;
     }
+    bufferReady = false;
+    mutex = false;
   }else if(timer != 0){
     //Once the time has expired, reset the timer
     Serial.println("Finished recording");
@@ -160,7 +177,7 @@ void loop() {
 
   //If server is not connected, try to reconnect when the button is pressed
   if(!remoteClient.connected()){
-    Serial.println("Disconnected from server\nPress main button to reconnect");
+    Serial.println("\nDisconnected from server\nPress main button to reconnect");
     while(!remoteClient.connected()){
       M5.update();
       if(M5.BtnA.wasPressed()){

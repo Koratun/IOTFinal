@@ -11,12 +11,15 @@ async def getShazam(filename):
     
 
     songData = {}
-
-    songData['title'] = out['track']['title']
-    # Album title
-    songData['album'] = out['track']['sections'][0]['metadata'][0]['text']
-    # Artist
-    songData['artist'] = out['track']['subtitle']
+    try:
+        songData['title'] = out['track']['title']
+        # Album title
+        songData['album'] = out['track']['sections'][0]['metadata'][0]['text']
+        # Artist
+        songData['artist'] = out['track']['subtitle']
+    except KeyError as e:
+        print(e)
+        print(out)
 
     # Note: Sometimes, Lyrics are not found. Check to see if sections[1]['type'] == 'LYRICS', 
     # if it does, then artist is under 3, if not then artist is under 2
