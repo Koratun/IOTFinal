@@ -22,7 +22,7 @@ WiFiClient remoteClient;
 #define BUTTON_PIN 37
 #define PIN_CLK  0
 #define PIN_DATA 34
-#define READ_LEN (2 * 256)
+#define READ_LEN (2 * 1024)
 #define GAIN_FACTOR 3
 uint8_t BUFFER[READ_LEN] = {0};
 
@@ -59,7 +59,7 @@ void mic_record_task (void* arg)
     while(mutex){
       //Delay is needed because the M5 is not using true multithreading
       //Without this delay the program gets stuck in this loop.
-      vTaskDelay(1);
+      delayMicroseconds(1);
     }
     mutex = true;
     i2s_read(I2S_NUM_0,(char*) BUFFER, READ_LEN, &bytesread, (100 / portTICK_RATE_MS));
@@ -81,11 +81,11 @@ void i2sInit()
     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX | I2S_MODE_PDM),
     .sample_rate =  44100,
     .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT, // is fixed at 12bit, stereo, MSB
-    .channel_format = I2S_CHANNEL_FMT_ALL_RIGHT, //from _RIGHT_LEFT
+    .channel_format = I2S_CHANNEL_FMT_ONLY_RIGHT, //from _RIGHT_LEFT
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-    .dma_buf_count = 2,
-    .dma_buf_len = 128,
+    .dma_buf_count = 6,
+    .dma_buf_len = 1024,
   };
 
   i2s_pin_config_t pin_config;
@@ -95,10 +95,7 @@ void i2sInit()
   pin_config.data_in_num  = PIN_DATA;
 
   
-  esp_err_t err = i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-  if (err != ESP_OK) {
-    Serial.printf("Failed installing driver: %d\n", err);
-  }
+  i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
   i2s_set_pin(I2S_NUM_0, &pin_config);
   i2s_set_clk(I2S_NUM_0, 44100, I2S_BITS_PER_SAMPLE_16BIT, I2S_CHANNEL_MONO);
 }
@@ -106,6 +103,7 @@ void i2sInit()
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
 
   M5.begin();
   M5.Lcd.setRotation(3);
@@ -126,7 +124,6 @@ void setup() {
     Serial.println("Did not connect");
   }else{
     Serial.println("\nConnected to server!");
-
 
     remoteClient.print("->Hello from the M5StickCPlus!!");
     Serial.println("Sent message to server");
@@ -150,18 +147,19 @@ void loop() {
     timer = millis() + secondsToWait * 1000;
   }
 
-  //If the timer has been set, continue streaming data
+  //If the timer has been set, record and stream data
   if(millis() < timer){
     //Wait here until the buffer is ready and the mutex is free
     while(mutex || !bufferReady){
       //Delay is needed because the M5 is not using true multithreading
       //Without this delay the program gets stuck in this loop.
-      vTaskDelay(1 / portTICK_RATE_MS);
+      delayMicroseconds(1);
     }
     mutex = true;
     for(int i = 0; i < READ_LEN / 2; i++){
       //Encode data as hex string and send to server
       remoteClient.print(hexEncode(adcBuffer[i])+';');
+      //Serial.println(adcBuffer[i]);
     }
     bufferReady = false;
     mutex = false;
@@ -188,5 +186,4 @@ void loop() {
     Serial.println("Connected to server!");
   }
 
-  //vTaskDelay(1000 / portTICK_RATE_MS); // otherwise the main task wastes half of the cpu cycles
 }
