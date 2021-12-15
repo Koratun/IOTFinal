@@ -10,12 +10,14 @@
 //Includes
 #include<WiFi.h>
 
-//First we need to test if we can make a connection to the server
+#include<list>
 
 const uint port = 10000;
 
-//WiFiServer server(port);
 WiFiClient remoteClient;
+
+RTC_TimeTypeDef RTC_TimeStruct;
+RTC_DateTypeDef RTC_DateStruct;
 
 #include "secrets.h"
 
@@ -28,28 +30,21 @@ uint8_t BUFFER[READ_LEN] = {0};
 
 int16_t *adcBuffer = NULL;
 
-String hexEncode(int16_t n){
-  String hex = "";
-  while(n != 0){
-    int toHex = n % 16;
-    char h;
-    if(toHex < 10){
-      h = toHex + '0';
-    }else{
-      h = (toHex-10) + 'a';
-    }
-    hex = h + hex;
-    n /= 16;
-  }
-  return hex;
+//A list containing the time and date of all snoring start and stop times
+std::list<String> snoringTimes;
+
+//Gets the real time clock and converts it to a string
+const char* getDateTime(){
+  M5.Rtc.GetTime(&RTC_TimeStruct);
+  M5.Rtc.GetData(&RTC_DateStruct);
+  char* dateTime = new char[20];
+  sprintf(dateTime, "%04d-%02d-%02d %02d:%02d:%02d", RTC_DateStruct.Year, RTC_DateStruct.Month, RTC_DateStruct.Date, RTC_TimeStruct.Hours, RTC_TimeStruct.Minutes, RTC_TimeStruct.Seconds);
+  return dateTime;
 }
 
 // This makeshift mutex is used to prevent the main thread from reading 
 // the ADC buffer while it is being written to
 bool mutex = false;
-
-// a flag to indicate if the buffer is ready to be read
-bool bufferReady = false;
 
 //Mic Code
 void mic_record_task (void* arg)
@@ -67,8 +62,7 @@ void mic_record_task (void* arg)
     // Effectively converting two values in the lower order array:
     // [low_order_bits, high_order_bits] to a single value in an 
     // array of half the length, but holding more value: [16bit_value]
-    adcBuffer = (int16_t *)BUFFER; 
-    bufferReady = true;
+    adcBuffer = (int16_t *)BUFFER;
     mutex = false;
     
     vTaskDelay(100 / portTICK_RATE_MS);
@@ -125,65 +119,198 @@ void setup() {
   }else{
     Serial.println("\nConnected to server!");
 
-    remoteClient.print("->Hello from the M5StickCPlus!!");
+    remoteClient.print("Time");
     Serial.println("Sent message to server");
   }
+
+  //Wait until the server sends a message
+  while(!remoteClient.available());
+
+  //Read the time response from the server
+  String datetime = remoteClient.readStringUntil('\n');
+  //Parse response and set the date and time
+  //Response is in the format: "YYYY-MM-DD HH:MM:SS"
+  Serial.println("Response from server: " + datetime);
+  int year = datetime.substring(0,4).toInt();
+  int month = datetime.substring(5,7).toInt();
+  int day = datetime.substring(8,10).toInt();
+  int hour = datetime.substring(11,13).toInt();
+  int minute = datetime.substring(14,16).toInt();
+  int second = datetime.substring(17,19).toInt();
+
+  //Set RTC data
+  RTC_TimeTypeDef TimeStruct;
+  //Set the time.
+  TimeStruct.Hours = hour;
+  TimeStruct.Minutes = minute;
+  TimeStruct.Seconds = second;
+  //writes the set time to the real time clock.
+  M5.Rtc.SetTime(&TimeStruct);  
+  RTC_DateTypeDef DateStruct;
+  //Set the date.
+  DateStruct.WeekDay = 3; //We won't use the day of the week, so this number doesn't matter.
+  DateStruct.Month = month;
+  DateStruct.Date = day;
+  DateStruct.Year = year;
+  M5.Rtc.SetData(&DateStruct);
+
+  //Close connection to server
+  remoteClient.stop();
+
+  //Put WiFi to sleep
+  WiFi.setSleep(true);
+
+  //Prep display
+  M5.Lcd.fillScreen(BLACK);
+  M5.Lcd.setCursor(5,5);
+  M5.Lcd.setTextColor(WHITE);
+  M5.Lcd.setTextSize(2);
+  M5.Lcd.println("Snoring Detection");
+  //Set cursor always to x=5
+  M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+  M5.Lcd.println("Inactive");
+  M5.Lcd.setTextSize(1);
+  M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+  M5.Lcd.println("Press the button to start");
 
   i2sInit();
   xTaskCreate(mic_record_task, "mic_record_task", 2048, NULL, 1, NULL);
 }
 
 long timer = 0;
-uint8_t secondsToWait = 25;
+uint8_t secondsToWait = 15;
+bool snoring = false;
+bool lastSnoring = false;
+String startTime = "";
+
+bool detectMode = false;
 
 void loop() {
   //Read the button
   M5.update();
   
-  //If the user presses the main button, start the timer
+  //If the button is pressed, toggle the mode
   if(M5.BtnA.wasPressed()){
-    //Set timer
-    Serial.println("Started recording");
-    timer = millis() + secondsToWait * 1000;
+    detectMode = !detectMode;
+    if(detectMode){
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setCursor(5,5);
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setTextSize(2);
+      M5.Lcd.println("Snoring Detection");
+      //Set cursor always to x=5
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      M5.Lcd.println("Active");
+      M5.Lcd.setTextSize(1);
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      M5.Lcd.println("Press the button again to stop");
+    }else{
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setCursor(5,5);
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setTextSize(2);
+      M5.Lcd.println("Snoring Detection");
+      //Set cursor always to x=5
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      M5.Lcd.println("Deactivated");
+      M5.Lcd.setTextSize(1);
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      M5.Lcd.println("Press the button to start");
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      if(snoringTimes.size() > 0)
+        M5.Lcd.println("Sending data to server...");
+      else
+        M5.Lcd.println("No data to send");
+    }
   }
 
-  //If the timer has been set, record and stream data
-  if(millis() < timer){
-    //Wait here until the buffer is ready and the mutex is free
-    while(mutex || !bufferReady){
+  if(snoring != lastSnoring){
+    if(snoring){
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setCursor(5,5);
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setTextSize(2);
+      M5.Lcd.println("Snoring Detected");
+      M5.Lcd.setTextSize(1);
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      M5.Lcd.println("Press the button to stop");
+    }else{
+      M5.Lcd.fillScreen(BLACK);
+      M5.Lcd.setCursor(5,5);
+      M5.Lcd.setTextColor(WHITE);
+      M5.Lcd.setTextSize(2);
+      M5.Lcd.println("Snoring Stopped");
+      M5.Lcd.setTextSize(1);
+      M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+      M5.Lcd.println("Press the button to stop");
+    }
+  }
+
+  if(detectMode){
+    while(mutex){
       //Delay is needed because the M5 is not using true multithreading
       //Without this delay the program gets stuck in this loop.
       delayMicroseconds(1);
     }
     mutex = true;
     for(int i = 0; i < READ_LEN / 2; i++){
-      //Encode data as hex string and send to server
-      remoteClient.print(hexEncode(adcBuffer[i])+';');
-      //Serial.println(adcBuffer[i]);
-    }
-    bufferReady = false;
-    mutex = false;
-  }else if(timer != 0){
-    //Once the time has expired, reset the timer
-    Serial.println("Finished recording");
-    timer = 0;
-  }
-
-  while(remoteClient.available()){
-    Serial.print(remoteClient.readString());
-  }
-
-  //If server is not connected, try to reconnect when the button is pressed
-  if(!remoteClient.connected()){
-    Serial.println("\nDisconnected from server\nPress main button to reconnect");
-    while(!remoteClient.connected()){
-      M5.update();
-      if(M5.BtnA.wasPressed()){
-        Serial.println("Connecting to server");
-        remoteClient.connect(serverIP, port);
+      Serial.println(adcBuffer[i]);
+      if(adcBuffer[i] > 1200){
+        //Serial.println("Snore detected.");
+        timer = millis() + secondsToWait * 1000;
+        if(!snoring){
+          snoring = true;
+          //Save the current RTC to the start time
+          startTime = getDateTime();
+        }
       }
     }
-    Serial.println("Connected to server!");
+    mutex = false;
+
+    if(timer > 0 && millis() > timer){
+      timer = 0;
+      snoring = false;
+      //Save the pair of start and end times to the list of snore times
+      snoringTimes.push_back(startTime + "," + getDateTime());
+    }
+  }
+
+  //If we are not in detect mode and the snoring list is not empty, send the data to the server
+  if(!detectMode && snoringTimes.size() > 0){
+    //Wake up the wifi
+    WiFi.setSleep(false);
+    //Connect to the server
+    remoteClient.connect(serverIP, port);
+    //Wait until the connection is established
+    while(!remoteClient.connected()){
+      Serial.print(".");
+    }
+    Serial.println("\nConnected to server!");
+
+    //Send the data
+    for(String& time : snoringTimes){
+      remoteClient.println(time);
+    }
+    Serial.println("Sent data to server");
+    //Clear the list
+    snoringTimes.clear();
+    //Close the connection
+    remoteClient.stop();
+    //Put WiFi to sleep
+    WiFi.setSleep(true);
+  
+    //Fix display
+    M5.Lcd.fillScreen(BLACK);
+    M5.Lcd.setCursor(5,5);
+    M5.Lcd.setTextColor(WHITE);
+    M5.Lcd.setTextSize(2);
+    M5.Lcd.println("Snoring Detection");
+    //Set cursor always to x=5
+    M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+    M5.Lcd.println("Inactive");
+    M5.Lcd.setTextSize(1);
+    M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
+    M5.Lcd.println("Press the button to start");
   }
 
 }

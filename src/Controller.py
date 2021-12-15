@@ -2,13 +2,9 @@
 # It will then send the data to the AudioHub.py script
 # It will take the output from the AudioHub.py script and send it to the m5stick
 
-from re import L
 import socket
-import asyncio
 import select
-import AudioHub
-import time
-import threading
+import datetime
 
 # Create a TCP/IP socket
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -29,125 +25,70 @@ inputs = [ server ]
 outputs = []
 
 
-# Subclass Thread to run asyncio tasks and return the result
-class AudioThread(threading.Thread):
-    def __init__(self, data, timeout, loop):
-        threading.Thread.__init__(self)
-        self.data = data
-        self.timeout = timeout
-        self.loop = loop
-        self.result = None
-
-    def run(self):
-        try:
-            self.result = self.loop.run_until_complete(self.runasync())
-            # Catch timeout error
-        except asyncio.TimeoutError:
-            print("Timeout")
-            self.result = "Timeout"
-
-    async def runasync(self):
-        return await asyncio.wait_for(AudioHub.getShazam(AudioHub.decodeAudio(self.data, append=True, convert=True)), timeout=self.timeout)
-
-loop = asyncio.get_event_loop()
-
-audioThreads = []
-
-timer = 0
-seconds_to_wait = 25
-
-last_execution = seconds_to_wait
 
 while inputs:
 
     # Wait for at least one of the sockets to be ready for processing
-    readable, writable, exceptional = select.select(inputs, outputs, inputs)
+    try:
+        readable, writable, exceptional = select.select(inputs, outputs, inputs)
 
-    # Handle inputs
-    for s in readable:
-        if s is server:
-            # A "readable" server socket is ready to accept a connection
-            connection, client_address = s.accept()
-            print(f'connection from {client_address}')
-            connection.setblocking(0)
-            inputs.append(connection)
+        sendtime = False
 
-            # Give the connection a queue for data we want to send
-            outputs.append(connection)
+        # Handle inputs
+        for s in readable:
+            if s is server:
+                # A "readable" server socket is ready to accept a connection
+                connection, client_address = s.accept()
+                print(f'connection from {client_address}')
+                connection.setblocking(0)
+                inputs.append(connection)
 
-        else:
-            # A "readable" connection socket is ready to send/receive data
-            # Read the data and trim off the beginning b' and end '
-            data = str(s.recv(4096))[2:-1]
-            print(len(data))
-            if data:
-                if not "Hello" in data:
-                    # transmit audio data to the AudioHub.py script and add the task to the list of tasks
+                # Give the connection a queue for data we want to send
+                outputs.append(connection)
 
-                    # If the timer has not started, then start it
-                    if timer == 0:
-                        print("Timer started")
-                        # Decode the data we received and save it to a file
-                        AudioHub.decodeAudio(data)
-                        # Start timer
-                        # Add a second to make sure the M5 stick has enough time to stop sending the data
-                        timer = time.time() + seconds_to_wait + 1
-                    elif int(timer - time.time()) % 5 == 0 and not (int(timer - time.time()) == last_execution):
-                        last_execution = int(timer - time.time())
-                        # If 5 seconds have passed since the timer started (or since the last task was created),
-                        # then create a task to recognize the audio
-                        print(f"Creating task with {last_execution} seconds left")
-                        audioThreads += [AudioThread(data, last_execution, loop)]
-                        # Start the thread
-                        audioThreads[-1].start()
-                        print("Task created")
-                    else:
-                        # If we have data to decode but aren't ready to create a task, then just save the data
-                        AudioHub.decodeAudio(data, append=True)
-
-                # Add output channel for response
-                outputs.append(s)
             else:
-                # Interpret empty result as closed connection
-                print('closing')
-                # Stop listening for input on the connection
-                inputs.remove(s)
-                s.close()
-    
-    # Handle outputs
-    for s in writable:
-        # A "writable" connection socket is ready to send data
-        # If a task has completed successfully, send the result to the client
-        for thread in audioThreads:
-            if thread.result is str:
-                try:
-                    if thread.result == "Timeout":
-                        raise Exception("Timeout")
-                    s.send(thread.result.encode())
-                    print(f"Sent {thread.result}")
-                    outputs.remove(s)
-                    audioThreads = []
-                    break
-                except Exception as e:
-                    print(e)
-                    audioThreads.remove(thread)
-
-        if timer > 0 and timer - time.time() < 0:
-            # If the timer has expired, then reset the timer and audioThreads
-            print("Timer expired")
-            if len(audioThreads) > 0:
-                # Tell the client that a song was not found if there are still tasks in the list
-                s.send(b"Song not found\n")
-                audioThreads = []
-            outputs.remove(s)
-            timer = 0
-            last_execution = seconds_to_wait
-    
-    # Handle "exceptional conditions"
-    for s in exceptional:
-        print('handling exceptional condition')
-        # Stop listening for input on the connection
-        inputs.remove(s)
-        if s in outputs:
-            outputs.remove(s)
-        s.close()
+                # A "readable" connection socket is ready to send/receive data
+                # Read the data and trim off the beginning b' and end '
+                data = str(s.recv(1024))[2:-1]
+                print(data)
+                if data:
+                    if data == "Time":
+                        # Set flag to send the time to the client
+                        sendtime = True
+                    else:
+                        # parse datetime from data
+                        dt = datetime.datetime.strptime(data.rpartition(",")[0], '%Y-%m-%d %H:%M:%S')
+                        print(dt)
+                    
+                    # Add output channel for response
+                    outputs.append(s)
+                else:
+                    # Interpret empty result as closed connection
+                    print('closing')
+                    # Stop listening for input on the connection
+                    inputs.remove(s)
+                    if s in outputs:
+                        outputs.remove(s)
+                    s.close()
+        
+        # Handle outputs
+        for s in writable:
+            # A "writable" connection socket is ready to send data
+            # If the flag is set, send the time to the client
+            if sendtime:
+                print("Sending time")
+                s.send(str(datetime.datetime.now()).encode())
+                sendtime = False
+        
+        # Handle "exceptional conditions"
+        for s in exceptional:
+            print('handling exceptional condition')
+            # Stop listening for input on the connection
+            inputs.remove(s)
+            if s in outputs:
+                outputs.remove(s)
+            s.close()
+    except ValueError:
+        # Remove the socket that raised the exception
+        print("Resetting inputs to server")
+        inputs = [server]
