@@ -204,7 +204,18 @@ void loop() {
       M5.Lcd.setTextSize(1);
       M5.Lcd.setCursor(5, M5.Lcd.getCursorY());
       M5.Lcd.println("Press the button again to stop");
+      long waitTime = millis() + 15000;
+      while(millis() < waitTime){
+        delay(100);
+      }
     }else{
+      //If snoring was still being detected, record current time as the stop time
+      if(snoring){
+        timer = 0;
+        snoring = false;
+        //Save the pair of start and end times to the list of snore times
+        snoringTimes.push_back(startTime + "," + getDateTime());
+      }
       M5.Lcd.fillScreen(BLACK);
       M5.Lcd.setCursor(5,5);
       M5.Lcd.setTextColor(WHITE);
@@ -225,6 +236,7 @@ void loop() {
   }
 
   if(snoring != lastSnoring){
+    lastSnoring = snoring;
     if(snoring){
       M5.Lcd.fillScreen(BLACK);
       M5.Lcd.setCursor(5,5);
@@ -254,8 +266,8 @@ void loop() {
     }
     mutex = true;
     for(int i = 0; i < READ_LEN / 2; i++){
-      Serial.println(adcBuffer[i]);
-      if(adcBuffer[i] > 1200){
+      //Serial.println(adcBuffer[i]);
+      if(adcBuffer[i] > 1250 && adcBuffer[i] < 1400){
         //Serial.println("Snore detected.");
         timer = millis() + secondsToWait * 1000;
         if(!snoring){
@@ -289,7 +301,7 @@ void loop() {
 
     //Send the data
     for(String& time : snoringTimes){
-      remoteClient.println(time);
+      remoteClient.print(time+';');
     }
     Serial.println("Sent data to server");
     //Clear the list

@@ -50,15 +50,26 @@ while inputs:
                 # A "readable" connection socket is ready to send/receive data
                 # Read the data and trim off the beginning b' and end '
                 data = str(s.recv(1024))[2:-1]
-                print(data)
                 if data:
                     if data == "Time":
                         # Set flag to send the time to the client
                         sendtime = True
                     else:
                         # parse datetime from data
-                        dt = datetime.datetime.strptime(data.rpartition(",")[0], '%Y-%m-%d %H:%M:%S')
-                        print(dt)
+                        dt = [[datetime.datetime.strptime(datapoint, '%Y-%m-%d %H:%M:%S') for datapoint in pair.split(',')] for pair in data.split(";")[:-1]]
+
+                        # Output the data to a txt file
+                        with open("data.txt", "a") as f:
+                            last_date = ""
+                            for pair in dt:
+                                # Write the date to the file, but only if it's a new date
+                                if str(pair[0].date()) != last_date:
+                                    last_date = str(pair[0].date())
+                                    f.write(last_date+"\n")
+                                # Write the times to the file
+                                f.write(str(pair[0].time()) + ", " + str(pair[1].time()) + "\n")
+                                # Also write the number of seconds between the two datapoints
+                                f.write(str(pair[1] - pair[0]) + "\n")
                     
                     # Add output channel for response
                     outputs.append(s)
@@ -90,5 +101,5 @@ while inputs:
             s.close()
     except ValueError:
         # Remove the socket that raised the exception
-        print("Resetting inputs to server")
         inputs = [server]
+        outputs = []
